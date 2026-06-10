@@ -1,0 +1,400 @@
+# Loan data analysis
+
+```{python}
+
+# Section 1: Import Libraries and Load Data
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+
+df = pd.read_csv("loan_data.csv")
+
+df.head()
+```
+
+
+```{python}
+
+# Section 2: Basic Data Understanding
+
+print("Dataset shape:", df.shape)
+print("\nColumn names:")
+print(df.columns.tolist())
+
+print("\nMissing values:")
+print(df.isnull().sum())
+
+print("\nData types:")
+print(df.dtypes)
+
+print("\nSummary statistics:")
+df.describe(include="all")
+
+```
+
+
+# The data contains significant outliers.
+
+Age max = 144
+Employee Experience max = 125
+Income max = 7,200,766
+
+# Remove Extreme Outliers
+```{python}
+# Remove Extreme Outliers
+df = df[df["Age"] <= 80]
+df = df[df["Employee Experience"] <= 60]
+
+```
+
+
+
+
+# Section 3: Research Questions
+
+Research Questions:
+
+1. Can we predict loan interest rate based on borrower and loan characteristics?
+2. Which factors are most important in predicting loan interest rate?
+3. How do loan intent, income, home ownership, and loan percentage relate to interest rate?
+
+Questions this dataset cannot answer:
+- Whether a loan will be approved or rejected.
+- Whether a borrower will default.
+- Whether a borrower will fully repay the loan.
+
+Reason:
+The dataset does not include loan status, approval result, default status, or repayment outcome.
+
+
+
+```{python}
+
+# Section 4: Exploratory Data Analysis
+
+numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+
+for col in numeric_cols:
+    plt.figure(figsize=(6, 4))
+    plt.hist(df[col], bins=30)
+    plt.title(f"Distribution of {col}")
+    plt.xlabel(col)
+    plt.ylabel("Count")
+    plt.show()
+
+
+```
+
+
+ Summary:
+
+The age distribution is right-skewed, with most borrowers between 20 and 35 years old. Very few borrowers are older than 50.
+
+Person income is highly right-skewed, indicating that most borrowers have moderate income levels while a small number of borrowers have exceptionally high incomes.
+
+Employee experience is concentrated at lower values, with most borrowers having fewer than 10 years of work experience.
+
+Loan amounts are primarily distributed between $3,000 and $15,000, with fewer large loans above $20,000.
+
+Loan interest rates are approximately centered around 11%, with most rates falling between 8% and 14%.
+
+Loan percentage is right-skewed, suggesting that most borrowers borrow a relatively small proportion of their income, while a small number of borrowers have substantially higher borrowing ratios.
+
+Overall, the dataset contains several non-normal distributions and noticeable outliers, particularly in income and experience, which should be considered during modeling and analysis.
+
+
+
+
+
+
+```{python}
+
+# Section 5: Interest Rate by Categorical Features
+
+categorical_cols = ["Gender", "Education", "Home Onwership", "Loan Intent"]
+
+for col in categorical_cols:
+    summary = df.groupby(col)["Loan interest Rate"].mean().sort_values(ascending=False)
+    print(f"\nAverage Loan Interest Rate by {col}:")
+    print(summary)
+
+    plt.figure(figsize=(8, 4))
+    summary.plot(kind="bar")
+    plt.title(f"Average Loan Interest Rate by {col}")
+    plt.ylabel("Average Interest Rate")
+    plt.xlabel(col)
+    plt.xticks(rotation=45)
+    plt.show()
+
+```
+
+Summary:
+
+The average loan interest rate is very similar between male and female borrowers, suggesting that gender has minimal influence on interest rate determination.
+
+Education level shows only small differences in average interest rates. Borrowers with doctorate degrees have the highest average rate (11.07%), while associate degree holders have the lowest (10.98%), indicating a weak relationship between education and interest rates.
+
+Home ownership appears to have a stronger impact on interest rates. Borrowers classified as OTHER and RENT tend to receive higher interest rates, while homeowners with a mortgage or fully owned property receive lower rates. This may reflect differences in perceived financial stability and lending risk.
+
+Loan purpose also affects interest rates. Home improvement and medical loans have the highest average interest rates, whereas education and venture loans have slightly lower average rates. However, the differences across loan purposes are relatively modest.
+
+Overall, home ownership shows the strongest association with loan interest rates among the categorical variables analyzed, while gender and education exhibit only limited effects.
+
+
+
+
+
+
+```{python}
+
+# Section 6: Correlation Analysis
+
+corr = df[numeric_cols].corr()
+
+print("Correlation with Loan interest Rate:")
+print(corr["Loan interest Rate"].sort_values(ascending=False))
+
+plt.figure(figsize=(8, 6))
+plt.imshow(corr)
+plt.colorbar()
+plt.xticks(range(len(corr.columns)), corr.columns, rotation=90)
+plt.yticks(range(len(corr.columns)), corr.columns)
+plt.title("Correlation Matrix")
+plt.show()
+
+```
+
+Summary:
+
+The correlation analysis indicates that Loan Amount (r = 0.146) and Loan Percentage (r = 0.125) have the strongest positive relationships with Loan Interest Rate, although both correlations are relatively weak.
+
+Age (r = 0.013), Employee Experience (r = 0.016), and Person Income (r = -0.001) show almost no linear relationship with interest rates.
+
+A very strong positive correlation exists between Age and Employee Experience, suggesting that older borrowers generally have more work experience.
+
+Loan Amount and Loan Percentage are moderately positively correlated, indicating that larger loans often represent a higher proportion of borrower income.
+
+Overall, no single numerical feature exhibits a strong linear relationship with loan interest rates, suggesting that interest rate determination is likely influenced by a combination of multiple factors rather than any individual variable.
+
+
+
+```{python}
+
+# Section 7: Prepare Features and Target
+
+target = "Loan interest Rate"
+
+X = df.drop(columns=[target])
+y = df[target]
+
+numeric_features = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
+categorical_features = X.select_dtypes(include=["object"]).columns.tolist()
+
+print("Numeric features:", numeric_features)
+print("Categorical features:", categorical_features)
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", StandardScaler(), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+    ]
+)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+```
+
+
+```{python}
+
+# Section 8: Train and Compare Models
+
+models = {
+    "Linear Regression": LinearRegression(),
+    "Ridge Regression": Ridge(alpha=1.0),
+    "Random Forest": RandomForestRegressor(
+        n_estimators=200,
+        random_state=42,
+        n_jobs=-1
+    ),
+    "Gradient Boosting": GradientBoostingRegressor(
+        random_state=42
+    )
+}
+
+results = []
+
+for name, model in models.items():
+    pipeline = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("model", model)
+        ]
+    )
+
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+
+    mae = mean_absolute_error(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    r2 = r2_score(y_test, y_pred)
+
+    results.append({
+        "Model": name,
+        "MAE": mae,
+        "RMSE": rmse,
+        "R2": r2
+    })
+
+results_df = pd.DataFrame(results).sort_values(by="R2", ascending=False)
+results_df
+
+```
+
+Model Performance Summary:
+
+Among all tested models, Random Forest achieved the best predictive performance with an MAE of 2.29, RMSE of 2.84, and R² of 0.097.
+
+Gradient Boosting ranked second with an R² of 0.065, while Linear Regression and Ridge Regression produced similar results with R² values around 0.043.
+
+Although Random Forest outperformed the other models, the overall predictive power remains relatively low. The highest R² value of 0.097 indicates that the available borrower and loan characteristics explain only a small portion of the variation in loan interest rates.
+
+These results suggest that important factors affecting interest rates may not be included in the dataset, such as credit score, debt-to-income ratio, repayment history, loan term, lender policies, and other financial risk indicators.
+
+Overall, the models demonstrate limited ability to accurately predict loan interest rates, highlighting the importance of additional borrower risk information in lending decisions.
+
+
+
+
+
+```{python}
+
+# Section 9: Select the Best Model
+
+best_model_name = results_df.iloc[0]["Model"]
+best_model = models[best_model_name]
+
+best_pipeline = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("model", best_model)
+    ]
+)
+
+best_pipeline.fit(X_train, y_train)
+y_pred_best = best_pipeline.predict(X_test)
+
+print("Best Model:", best_model_name)
+print("MAE:", mean_absolute_error(y_test, y_pred_best))
+print("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred_best)))
+print("R2:", r2_score(y_test, y_pred_best))
+
+```
+
+Best Model: Random Forest
+MAE: 2.2861719548788617
+RMSE: 2.8396657823797136
+R2: 0.09681966650140039
+
+
+
+```{python}
+
+# Section 10: Feature Importance
+
+if best_model_name in ["Random Forest", "Gradient Boosting"]:
+    feature_names = best_pipeline.named_steps["preprocessor"].get_feature_names_out()
+    importances = best_pipeline.named_steps["model"].feature_importances_
+
+    feature_importance = pd.DataFrame({
+        "Feature": feature_names,
+        "Importance": importances
+    }).sort_values(by="Importance", ascending=False)
+
+    print("Top 15 Most Important Features:")
+    print(feature_importance.head(15))
+
+    plt.figure(figsize=(10, 6))
+    feature_importance.head(15).sort_values("Importance").plot(
+        x="Feature",
+        y="Importance",
+        kind="barh",
+        legend=False
+    )
+    plt.title("Top 15 Feature Importances")
+    plt.xlabel("Importance")
+    plt.ylabel("Feature")
+    plt.show()
+else:
+    print("Feature importance is not available for this model type.")
+
+```
+
+Summary:
+
+Feature importance analysis shows that Person Income is the most influential predictor of loan interest rates, accounting for approximately 29.2% of the model's predictive importance.
+
+Loan Amount (15.7%), Age (11.7%), Employee Experience (10.1%), and Loan Percentage (7.9%) are also among the most important variables. Together, these numerical features contribute the majority of the model's predictive power.
+
+Among categorical variables, Education and Loan Intent categories have moderate importance, while Home Ownership contributes a smaller but still meaningful effect.
+
+The results suggest that borrowers' financial characteristics, particularly income, loan size, and employment experience, play a larger role in interest rate prediction than demographic or categorical attributes.
+
+Overall, numerical borrower and loan-related variables dominate the model's decision-making process, while categorical factors provide additional but less substantial predictive value.
+
+
+
+```{python}
+
+# Section 11: Actual vs Predicted Interest Rate
+
+comparison = pd.DataFrame({
+    "Actual Interest Rate": y_test,
+    "Predicted Interest Rate": y_pred_best
+})
+
+comparison.head(20)
+
+```
+
+
+Prediction Analysis:
+
+The comparison between actual and predicted interest rates shows that the model tends to predict values near the overall average interest rate of approximately 11%.
+
+Low-interest loans are frequently overestimated, while high-interest loans are often underestimated. This pattern indicates that the model struggles to distinguish borrowers with particularly low or high interest rates.
+
+The prediction results are consistent with the relatively low R² value obtained during model evaluation, suggesting that the available features do not fully capture the factors that determine loan interest rates.
+
+Overall, the model can identify general trends in interest rate levels but has limited ability to accurately predict individual loan outcomes.
+
+
+
+## Final Conclusion
+
+This project investigated whether borrower demographics, financial characteristics, and loan information can be used to predict loan interest rates.
+
+Exploratory data analysis revealed that several variables, including income, employee experience, and loan percentage, exhibit highly skewed distributions with noticeable outliers. Home ownership and loan purpose showed meaningful differences in average interest rates, while gender and education had relatively limited effects.
+
+Correlation analysis indicated that Loan Amount and Loan Percentage have the strongest positive relationships with Loan Interest Rate, although the correlations remain relatively weak. No single variable demonstrated a strong linear relationship with interest rates, suggesting that lending decisions are influenced by multiple factors.
+
+Four machine learning models were evaluated, including Linear Regression, Ridge Regression, Random Forest, and Gradient Boosting. Among them, Random Forest achieved the best performance with an R² of 0.097, outperforming the other models. However, the overall predictive accuracy remained low, indicating that the available features explain only a small portion of the variation in loan interest rates.
+
+Feature importance analysis showed that Person Income, Loan Amount, Age, Employee Experience, and Loan Percentage were the most influential predictors. These results suggest that borrower financial characteristics contribute more to interest rate determination than demographic attributes.
+
+Overall, the study provides useful insights into the factors associated with loan interest rates, but the limited predictive performance suggests that important lending variables are missing from the dataset. Additional information such as credit score, debt-to-income ratio, repayment history, loan term, and lender-specific risk assessments would likely improve prediction accuracy and provide a more complete understanding of interest rate determination.
+
+
+
